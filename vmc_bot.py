@@ -150,6 +150,6 @@ def run_scanner():
         print("Alert Sent: SELL★")
     else:
         print(f"Data OK! Bias={bias} | BTC Bull={btc_bullish} | 5M CrossUp={cross_up_5m} | 5M CrossDn={cross_dn_5m}")
-
 if __name__ == "__main__":
+    send_telegram_alert("🚀 *VMC TEST ALERT*\nTelegram connection is 100% working!\nCloud bot is alive and ready for DOTUSDT.")
     run_scanner()
