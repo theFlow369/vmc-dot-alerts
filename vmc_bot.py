@@ -13,9 +13,9 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
 SYMBOL = "DOTUSDT"
 BTC_SYMBOL = "BTCUSDT"
 
-# Time-bound alert hours in UTC (0 to 24 for testing, change to 0 to 8 for Asian session only)
+# Time-bound alert hours: 00:00 to 08:00 UTC (Asian Session Only)
 ALERT_HOUR_START_UTC = 0
-ALERT_HOUR_END_UTC = 24
+ALERT_HOUR_END_UTC = 8
 
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
@@ -30,18 +30,16 @@ def send_telegram_alert(message):
         print(f"Telegram error: {e}")
 
 def get_binance_klines(symbol, interval, limit=100):
-    # Binance Public Global Data Mirror (No US Cloud IP Restrictions)
     url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
     try:
         resp = requests.get(url, timeout=15)
         data = resp.json()
         if not isinstance(data, list) or len(data) == 0:
-            # Fallback endpoint
             url_fallback = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
             data = requests.get(url_fallback, timeout=15).json()
         
         if not isinstance(data, list) or len(data) == 0:
-            print(f"Warning: No candle data returned for {symbol} {interval}. Raw response: {data}")
+            print(f"Warning: No candle data returned for {symbol} {interval}.")
             return None
 
         df = pd.DataFrame(data, columns=[
@@ -71,9 +69,9 @@ def run_scanner():
     now_utc = datetime.now(timezone.utc)
     print(f"[{now_utc}] Scanning {SYMBOL} on Binance Global Feed...")
 
-    # Time gate check
+    # Time gate: Asian Session only (00:00 - 08:00 UTC)
     if not (ALERT_HOUR_START_UTC <= now_utc.hour < ALERT_HOUR_END_UTC):
-        print(f"Outside alert hours ({ALERT_HOUR_START_UTC}:00-{ALERT_HOUR_END_UTC}:00 UTC). Standing by.")
+        print(f"Outside Asian session ({ALERT_HOUR_START_UTC}:00-{ALERT_HOUR_END_UTC}:00 UTC). Standing by.")
         return
 
     # Fetch data
@@ -150,6 +148,6 @@ def run_scanner():
         print("Alert Sent: SELL★")
     else:
         print(f"Data OK! Bias={bias} | BTC Bull={btc_bullish} | 5M CrossUp={cross_up_5m} | 5M CrossDn={cross_dn_5m}")
+
 if __name__ == "__main__":
-    send_telegram_alert("🚀 *VMC TEST ALERT*\nTelegram connection is 100% working!\nCloud bot is alive and ready for DOTUSDT.")
     run_scanner()
