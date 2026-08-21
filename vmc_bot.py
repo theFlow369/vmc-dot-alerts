@@ -15,7 +15,7 @@ BTC_SYMBOL = "BTCUSDT"
 
 # Time-bound alert hours in UTC (0 to 8 = 00:00-08:00 UTC Asian Session)
 ALERT_HOUR_START_UTC = 0
-ALERT_HOUR_END_UTC = 8
+ALERT_HOUR_END_UTC = 24
 
 def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
