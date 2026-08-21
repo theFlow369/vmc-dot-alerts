@@ -17,6 +17,10 @@ BTC_SYMBOL = "BTCUSDT"
 ALERT_HOUR_START_UTC = 0
 ALERT_HOUR_END_UTC = 8
 
+# WaveTrend Thresholds
+OS_LEVEL_15M = -52
+OB_LEVEL_15M = 52
+
 def send_telegram_alert(message):
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("Telegram secrets not configured properly.")
@@ -98,8 +102,10 @@ def run_scanner():
     bias = 1 if wt1_1h.iloc[-1] > 8 else (-1 if wt1_1h.iloc[-1] < -6 else 0)
 
     # Confirmed crossovers on the last CLOSED bar
-    cross_up_5m = (wt1_5m.iloc[-2] > wt2_5m.iloc[-2]) and (wt1_5m.iloc[-3] <= wt2_5m.iloc[-3])
-    cross_dn_5m = (wt1_5m.iloc[-2] < wt2_5m.iloc[-2]) and (wt1_5m.iloc[-3] >= wt2_5m.iloc[-3])
+    cross_up_5m  = (wt1_5m.iloc[-2] > wt2_5m.iloc[-2]) and (wt1_5m.iloc[-3] <= wt2_5m.iloc[-3])
+    cross_dn_5m  = (wt1_5m.iloc[-2] < wt2_5m.iloc[-2]) and (wt1_5m.iloc[-3] >= wt2_5m.iloc[-3])
+    cross_up_15m = (wt1_15m.iloc[-2] > wt2_15m.iloc[-2]) and (wt1_15m.iloc[-3] <= wt2_15m.iloc[-3])
+    cross_dn_15m = (wt1_15m.iloc[-2] < wt2_15m.iloc[-2]) and (wt1_15m.iloc[-3] >= wt2_15m.iloc[-3])
 
     # ATR for SL/TP
     tr = np.maximum(
@@ -111,43 +117,71 @@ def run_scanner():
     )
     atr = tr.rolling(14).mean().iloc[-1]
     close_p = df_5m['close'].iloc[-2]  # last CLOSED candle price
+    sl_long = round(close_p - (atr * 1.5), 4)
+    tp_long = round(close_p + (atr * 3.0), 4)
+    sl_short = round(close_p + (atr * 1.5), 4)
+    tp_short = round(close_p - (atr * 3.0), 4)
 
-    # Signal Logic
+    # 1. Precision 5M Cooldown Pullback Entries (BUY★ / SELL★)
     if bias == 1 and btc_bullish and cross_up_5m and wt1_15m.iloc[-1] <= 0:
-        sl = round(close_p - (atr * 1.5), 4)
-        tp = round(close_p + (atr * 3.0), 4)
         msg = (
-            f"🟢 *BUY★ DOTUSDT*\n"
+            f"🟢 *BUY★ DOTUSDT (Best Entry)*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"💵 Entry: `{close_p}`\n"
-            f"🛑 SL: `{sl}`\n"
-            f"🎯 TP: `{tp}`\n"
+            f"🛑 SL: `{sl_long}`\n"
+            f"🎯 TP: `{tp_long}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"Session: Asian ✅\n"
-            f"BTC Trend: Bullish ✅\n"
-            f"1H Bias: LONG ✅"
+            f"Type: 5M Cooldown Pullback\n"
+            f"Session: Asian ✅ | BTC: Bullish ✅"
         )
         send_telegram_alert(msg)
         print("Alert Sent: BUY★")
 
     elif bias == -1 and btc_bearish and cross_dn_5m and wt1_15m.iloc[-1] >= 0:
-        sl = round(close_p + (atr * 1.5), 4)
-        tp = round(close_p - (atr * 3.0), 4)
         msg = (
-            f"🔴 *SELL★ DOTUSDT*\n"
+            f"🔴 *SELL★ DOTUSDT (Best Entry)*\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"💵 Entry: `{close_p}`\n"
-            f"🛑 SL: `{sl}`\n"
-            f"🎯 TP: `{tp}`\n"
+            f"🛑 SL: `{sl_short}`\n"
+            f"🎯 TP: `{tp_short}`\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"Session: Asian ✅\n"
-            f"BTC Trend: Bearish ✅\n"
-            f"1H Bias: SHORT ✅"
+            f"Type: 5M Cooldown Bounce\n"
+            f"Session: Asian ✅ | BTC: Bearish ✅"
         )
         send_telegram_alert(msg)
         print("Alert Sent: SELL★")
+
+    # 2. Standard 15M Trend Continuation Entries (BUY / SELL)
+    elif bias == 1 and btc_bullish and cross_up_15m and wt1_15m.iloc[-2] <= OS_LEVEL_15M:
+        msg = (
+            f"🟢 *BUY DOTUSDT (Standard)*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💵 Entry: `{close_p}`\n"
+            f"🛑 SL: `{sl_long}`\n"
+            f"🎯 TP: `{tp_long}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Type: 15M Oversold Continuation\n"
+            f"Session: Asian ✅ | BTC: Bullish ✅"
+        )
+        send_telegram_alert(msg)
+        print("Alert Sent: Standard BUY")
+
+    elif bias == -1 and btc_bearish and cross_dn_15m and wt1_15m.iloc[-2] >= OB_LEVEL_15M:
+        msg = (
+            f"🔴 *SELL DOTUSDT (Standard)*\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"💵 Entry: `{close_p}`\n"
+            f"🛑 SL: `{sl_short}`\n"
+            f"🎯 TP: `{tp_short}`\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Type: 15M Overbought Continuation\n"
+            f"Session: Asian ✅ | BTC: Bearish ✅"
+        )
+        send_telegram_alert(msg)
+        print("Alert Sent: Standard SELL")
+
     else:
-        print(f"Data OK! Bias={bias} | BTC Bull={btc_bullish} | 5M CrossUp={cross_up_5m} | 5M CrossDn={cross_dn_5m}")
+        print(f"Data OK! Bias={bias} | BTC Bull={btc_bullish} | 5M CrossUp={cross_up_5m} | 15M CrossUp={cross_up_15m}")
 
 if __name__ == "__main__":
     run_scanner()
