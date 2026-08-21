@@ -13,11 +13,14 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
 SYMBOL = "DOTUSDT"
 BTC_SYMBOL = "BTCUSDT"
 
-# Time-bound alert hours in UTC (0 to 8 = 00:00-08:00 UTC Asian Session)
+# Time-bound alert hours in UTC (0 to 24 for testing, change to 0 to 8 for Asian session only)
 ALERT_HOUR_START_UTC = 0
 ALERT_HOUR_END_UTC = 24
 
 def send_telegram_alert(message):
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        print("Telegram secrets not configured properly.")
+        return
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "Markdown"}
     try:
@@ -27,41 +30,62 @@ def send_telegram_alert(message):
         print(f"Telegram error: {e}")
 
 def get_binance_klines(symbol, interval, limit=100):
-    url = f"https://fapi.binance.com/fapi/v1/klines?symbol={symbol}&interval={interval}&limit={limit}"
-    data = requests.get(url, timeout=15).json()
-    df = pd.DataFrame(data, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume',
-        'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
-    ])
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['close'] = df['close'].astype(float)
-    df['hlc3'] = (df['high'] + df['low'] + df['close']) / 3
-    return df
+    # Binance Public Global Data Mirror (No US Cloud IP Restrictions)
+    url = f"https://data-api.binance.vision/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+    try:
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
+        if not isinstance(data, list) or len(data) == 0:
+            # Fallback endpoint
+            url_fallback = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&limit={limit}"
+            data = requests.get(url_fallback, timeout=15).json()
+        
+        if not isinstance(data, list) or len(data) == 0:
+            print(f"Warning: No candle data returned for {symbol} {interval}. Raw response: {data}")
+            return None
+
+        df = pd.DataFrame(data, columns=[
+            'open_time', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'qav', 'num_trades', 'taker_base_vol', 'taker_quote_vol', 'ignore'
+        ])
+        df['high'] = df['high'].astype(float)
+        df['low'] = df['low'].astype(float)
+        df['close'] = df['close'].astype(float)
+        df['hlc3'] = (df['high'] + df['low'] + df['close']) / 3
+        return df
+    except Exception as e:
+        print(f"API Error fetching {symbol} {interval}: {e}")
+        return None
 
 def calculate_wavetrend(df, ch_len=9, avg_len=12):
     ap = df['hlc3']
     esa = ap.ewm(span=ch_len, adjust=False).mean()
     d = (ap - esa).abs().ewm(span=ch_len, adjust=False).mean()
-    ci = (ap - esa) / (0.015 * d.replace(0, 0.0001))
+    denom = (0.015 * d).replace(0, 0.0001)
+    ci = (ap - esa) / denom
     wt1 = ci.ewm(span=avg_len, adjust=False).mean()
     wt2 = wt1.rolling(window=4).mean()
     return wt1, wt2
 
 def run_scanner():
     now_utc = datetime.now(timezone.utc)
-    print(f"[{now_utc}] Scanning {SYMBOL}...")
+    print(f"[{now_utc}] Scanning {SYMBOL} on Binance Global Feed...")
 
-    # Time gate
+    # Time gate check
     if not (ALERT_HOUR_START_UTC <= now_utc.hour < ALERT_HOUR_END_UTC):
         print(f"Outside alert hours ({ALERT_HOUR_START_UTC}:00-{ALERT_HOUR_END_UTC}:00 UTC). Standing by.")
         return
 
-    # Fetch data from Binance Futures Public API
+    # Fetch data
     df_5m  = get_binance_klines(SYMBOL, "5m", 100)
     df_15m = get_binance_klines(SYMBOL, "15m", 100)
     df_1h  = get_binance_klines(SYMBOL, "1h", 100)
     df_btc = get_binance_klines(BTC_SYMBOL, "1h", 100)
+
+    # Safety validation
+    if df_5m is None or df_15m is None or df_1h is None or df_btc is None:
+        print("Data fetch failed. Will retry on next 5-minute cycle.")
+        return
 
     # BTC filter
     btc_ema50 = df_btc['close'].ewm(span=50, adjust=False).mean().iloc[-1]
@@ -125,7 +149,7 @@ def run_scanner():
         send_telegram_alert(msg)
         print("Alert Sent: SELL★")
     else:
-        print(f"No signal. Bias={bias} | BTC Bull={btc_bullish} | 5M CrossUp={cross_up_5m} | 5M CrossDn={cross_dn_5m}")
+        print(f"Data OK! Bias={bias} | BTC Bull={btc_bullish} | 5M CrossUp={cross_up_5m} | 5M CrossDn={cross_dn_5m}")
 
 if __name__ == "__main__":
     run_scanner()
