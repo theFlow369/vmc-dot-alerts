@@ -1,10 +1,9 @@
 # FILE: vmc_final_engine_v19_full.py
 import ccxt, pandas as pd, requests, datetime, os
 
-# --- CONFIGURATION (PRIVATE) ---
-# Exemption: Credential Paste Required
-TOKEN = "PASTE_YOUR_TOKEN_HERE"
-CHAT_ID = "PASTE_YOUR_ID_HERE"
+# --- CONFIGURATION (SECURE - ENV VARIABLES) ---
+TOKEN = os.environ.get("TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 SYMBOL = 'DOT/USDT'
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -239,12 +238,10 @@ def dispatch_pipeline(data):
     now_gmt8 = get_gmt8_now()
     quiet = is_quiet_window(now_gmt8)
     
-    # Priority bypass check (CLOSE signals or Line Alert triggers)
     is_priority_exit = data['raw_exit'] in ["CLOSE LONG", "CLOSE SHORT"]
     is_priority_line = data['raw_line_count'] > 0
     is_bypass_signal = is_priority_exit or is_priority_line
 
-    # 1. Digest Release Check at/after 06:00 GMT+8
     if not quiet:
         digest_content = read_and_clear_digest()
         if digest_content:
@@ -252,14 +249,12 @@ def dispatch_pipeline(data):
             print("Broadcasting quiet hours digest summary...")
             send_telegram(digest_msg)
 
-    # 2. Quiet Hours Processing
     if quiet:
         if is_bypass_signal:
             msg = format_alert_message(data, prefix="🚨 PRIORITY EXIT/LINE ALERT (QUIET HOURS BYPASS)")
             print(f"[QUIET HOURS BYPASS] Sending priority alert:\n{msg}")
             send_telegram(msg)
         else:
-            # Suppress routine signals and store into digest
             digest_entry = (
                 f"[{data['time']}] ACTION: {data['action']} | "
                 f"HEALTH: {data['health']} | EXIT: {data['exit']} | "
@@ -269,7 +264,6 @@ def dispatch_pipeline(data):
             append_digest_entry(digest_entry)
         return
 
-    # 3. Standard Routine Broadcast (Outside Quiet Hours)
     msg = format_alert_message(data)
     print(msg)
     send_telegram(msg)
