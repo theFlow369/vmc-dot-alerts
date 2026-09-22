@@ -1,30 +1,45 @@
-name: VMC DOT Alert Scanner
+name: VMC Alert Engine Runner
 
 on:
   schedule:
+    # Runs every 5 minutes (standard UTC cron)
     - cron: '*/5 * * * *'
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual trigger from Actions tab
+
+permissions:
+  contents: write
 
 jobs:
-  scan:
+  run-vmc:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
-
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.10'
+          cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
-          pip install -r requirements.txt
+          python -m pip install --upgrade pip
+          pip install ccxt pandas requests
 
-      - name: Run VMC Scanner
+      - name: Execute VMC Engine
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python vmc_bot.py
+          TOKEN: ${{ secrets.TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          python vmc_final_engine_v19_full.py
+
+      - name: Commit and Push State Updates
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add pos_state.txt quiet_digest.txt
+          git commit -m "chore: persist vmc engine state [skip ci]" || exit 0
+          git push
