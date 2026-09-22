@@ -38,6 +38,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add pos_state.txt quiet_digest.txt || true
+          touch pos_state.txt quiet_digest.txt
+          git add pos_state.txt quiet_digest.txt
           git commit -m "chore: persist vmc engine state [skip ci]" || exit 0
           git push
