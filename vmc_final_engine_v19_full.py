@@ -1,4 +1,4 @@
-# FILE: vmc_final_engine_v19_full.py
+# FILE: vmc_final_engine_v19_full.py  (ENGINE V20.1 - filename kept for workflow compatibility)
 import ccxt, pandas as pd, requests, datetime, os
 
 # --- CONFIGURATION (SECURE - ENV VARIABLES) ---
@@ -49,17 +49,17 @@ def calc_impulse_macd(df, length_ma=17, length_sig=9):
     return md, sb, sh
 
 def load_state():
-    if not os.path.exists(STATE_FILE): 
+    if not os.path.exists(STATE_FILE):
         return {"pos": "NONE", "last_side": 0, "mfi_delay": 0, "prev_wt_side": 0}
     try:
         with open(STATE_FILE, "r") as f:
             d = f.read().strip().split(',')
             return {"pos": d[0], "last_side": int(d[1]), "mfi_delay": int(d[2]), "prev_wt_side": int(d[3])}
-    except: 
+    except:
         return {"pos": "NONE", "last_side": 0, "mfi_delay": 0, "prev_wt_side": 0}
 
 def save_state(pos, last_side, mfi_delay, prev_wt_side):
-    with open(STATE_FILE, "w") as f: 
+    with open(STATE_FILE, "w") as f:
         f.write(f"{pos},{last_side},{mfi_delay},{prev_wt_side}")
 
 def append_digest_entry(entry_text):
@@ -81,7 +81,7 @@ def send_telegram(text):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TOKEN}/sendMessage",
-            data={"chat_id": CHAT_ID, "text": text},
+            data={"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"},
             timeout=30
         )
     except Exception as e:
@@ -94,7 +94,7 @@ def get_vmc_signals():
         ohlcv_h1 = ex.fetch_ohlcv(SYMBOL, timeframe='1h', limit=400)
         ohlcv_m15 = ex.fetch_ohlcv(SYMBOL, timeframe='15m', limit=1000)
         ohlcv_m5 = ex.fetch_ohlcv(SYMBOL, timeframe='5m', limit=400)
-        
+
         df_h1 = pd.DataFrame(ohlcv_h1, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         df_m15 = pd.DataFrame(ohlcv_m15, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
         df_m5 = pd.DataFrame(ohlcv_m5, columns=['ts', 'o', 'h', 'l', 'c', 'v'])
@@ -128,18 +128,21 @@ def get_vmc_signals():
         ema_up = (ema8.iloc[-3] < ema21.iloc[-3]) and (ema8.iloc[-2] > ema21.iloc[-2])
         ema_dn = (ema8.iloc[-3] > ema21.iloc[-3]) and (ema8.iloc[-2] < ema21.iloc[-2])
 
-        # --- IMPULSE MACD MODULE (15M 17/9 Filtered by 1H 34/9) ---
+        # --- IMPULSE MACD MODULE: 15M 17/9 (UNFILTERED) + 1H 34/9 (INFO ONLY) ---
         md15, sb15, sh15 = calc_impulse_macd(df_m15, 17, 9)
         md1, sb1, sh1 = calc_impulse_macd(df_h1, 34, 9)
-        h1_imac_bear = md1.iloc[-2] < 0 or sh1.iloc[-2] < 0
-        h1_imac_bull = md1.iloc[-2] > 0 or sh1.iloc[-2] > 0
         md_c, md_p = md15.iloc[-2], md15.iloc[-3]
         sh_c, sh_p = sh15.iloc[-2], sh15.iloc[-3]
 
-        imac_st1_bear = (sh_c > 0 and sh_c < sh_p) and (md_c > 0 and md_c < md_p) and h1_imac_bear
-        imac_st2_bear = ((md_p >= 0 and md_c < 0) or (sh_p >= 0 and sh_c < 0)) and h1_imac_bear
-        imac_st1_bull = (sh_c < 0 and sh_c > sh_p) and (md_c < 0 and md_c > md_p) and h1_imac_bull
-        imac_st2_bull = ((md_p <= 0 and md_c > 0) or (sh_p <= 0 and sh_c > 0)) and h1_imac_bull
+        imac_st1_bear = (sh_c > 0 and sh_c < sh_p) and (md_c > 0 and md_c < md_p)
+        imac_st2_bear = ((md_p >= 0 and md_c < 0) or (sh_p >= 0 and sh_c < 0))
+        imac_st1_bull = (sh_c < 0 and sh_c > sh_p) and (md_c < 0 and md_c > md_p)
+        imac_st2_bull = ((md_p <= 0 and md_c > 0) or (sh_p <= 0 and sh_c > 0))
+
+        md1_c, sh1_c = md1.iloc[-2], sh1.iloc[-2]
+        if md1_c > 0 and sh1_c > 0: imac_1h_str = "BULL"
+        elif md1_c < 0 and sh1_c < 0: imac_1h_str = "BEAR"
+        else: imac_1h_str = "MIXED"
 
         # --- TEMPORARY LINE ALERTS CHECK ---
         curr_low_m15 = df_m15['l'].iloc[-2]
@@ -160,51 +163,52 @@ def get_vmc_signals():
         # --- STATE LOADING & RESOLUTION ---
         st = load_state()
         pos, last_side, mfi_delay, prev_wt_side = st["pos"], st["last_side"], st["mfi_delay"], st["prev_wt_side"]
-        
-        if h1_wt_side != prev_wt_side and prev_wt_side != 0: 
+
+        if h1_wt_side != prev_wt_side and prev_wt_side != 0:
             mfi_delay = 0
-        if h1_wt_side != 0 and h1_mfi_side != h1_wt_side: 
+        if h1_wt_side != 0 and h1_mfi_side != h1_wt_side:
             mfi_delay += 1
-        elif h1_wt_side != 0 and h1_mfi_side == h1_wt_side: 
+        elif h1_wt_side != 0 and h1_mfi_side == h1_wt_side:
             mfi_delay = 0
-        
+
         health = "FINE"
         if h1_wt_side != 0 and h1_mfi_side != h1_wt_side:
             health = f"LAGGY ({mfi_delay})" if mfi_delay >= 2 else f"WAITING ({mfi_delay})"
 
         h1_bull = (h1_mfi_side == 1 and h1_wt_side == 1)
         h1_bear = (h1_mfi_side == -1 and h1_wt_side == -1)
-        
+
         action = "NO GO"
-        if (cross_up15 and wt1_c < -53) and h1_bull and ema_up: 
+        if (cross_up15 and wt1_c < -53) and h1_bull and ema_up:
             action, pos, last_side = "GOOD (LONG)", "LONG", 0
-        elif (cross_dn15 and wt1_c > 53) and h1_bear and ema_dn: 
+        elif (cross_dn15 and wt1_c > 53) and h1_bear and ema_dn:
             action, pos, last_side = "GOOD (SHORT)", "SHORT", 0
-        elif (h1_bull or h1_bear) and (wt1_c < -40 or wt1_c > 40): 
+        elif (h1_bull or h1_bear) and (wt1_c < -40 or wt1_c > 40):
             action = "WAIT"
 
         exit_r = "HOLD"
-        if pos == "LONG" and cross_dn15: 
+        if pos == "LONG" and cross_dn15:
             exit_r, pos, last_side = "CLOSE LONG", "NONE", 1
-        elif pos == "SHORT" and cross_up15: 
+        elif pos == "SHORT" and cross_up15:
             exit_r, pos, last_side = "CLOSE SHORT", "NONE", -1
         elif pos == "NONE":
             if last_side == 1: exit_r = "CLOSE-OLD LONG"
             elif last_side == -1: exit_r = "CLOSE-OLD SHORT"
 
         save_state(pos, last_side, mfi_delay, h1_wt_side)
-        
+
         bar_time_gmt8 = datetime.datetime.fromtimestamp(
-            df_m15['ts'].iloc[-2] / 1000, 
+            df_m15['ts'].iloc[-2] / 1000,
             datetime.timezone(datetime.timedelta(hours=8))
         ).strftime('%Y-%m-%d %H:%M GMT+8')
 
-        imac_str = "NONE"
-        if imac_st1_bear: imac_str = "imac 15min stage1 bear"
-        elif imac_st2_bear: imac_str = "stage 2 imac 15min bear"
-        elif imac_st1_bull: imac_str = "imac 15min stage1 bull"
-        elif imac_st2_bull: imac_str = "stage 2 imac 15min bull"
+        imac_raw = "NONE"
+        if imac_st1_bear: imac_raw = "imac 15min stage1 bear"
+        elif imac_st2_bear: imac_raw = "stage 2 imac 15min bear"
+        elif imac_st1_bull: imac_raw = "imac 15min stage1 bull"
+        elif imac_st2_bull: imac_raw = "stage 2 imac 15min bull"
 
+        imac_str = f"<b>{imac_raw}</b>" if imac_raw != "NONE" else "NONE"
         line_str = "\n".join(line_alert_msg) if line_alert_msg else "NONE"
 
         return {
@@ -214,14 +218,15 @@ def get_vmc_signals():
             "exit": exit_r,
             "wt1": round(wt1_c, 2),
             "imac": imac_str,
+            "imac_1h": imac_1h_str,
             "line_alerts": line_str,
             "raw_exit": exit_r,
             "raw_line_count": len(line_alert_msg)
         }
-    except Exception as e: 
+    except Exception as e:
         return {"error": str(e)}
 
-def format_alert_message(data, prefix="🚨 VMC ENGINE V19"):
+def format_alert_message(data, prefix="🚨 VMC ENGINE V20.1"):
     return (
         f"{prefix}\n"
         f"SYMBOL: {SYMBOL}\n"
@@ -229,7 +234,8 @@ def format_alert_message(data, prefix="🚨 VMC ENGINE V19"):
         f"ACTION: {data['action']}\n"
         f"HEALTH: {data['health']}\n"
         f"EXIT: {data['exit']}\n"
-        f"IMAC: {data['imac']}\n"
+        f"IMAC 15M: {data['imac']}\n"
+        f"IMAC 1H: {data['imac_1h']}\n"
         f"LINE ALERTS: {data['line_alerts']}\n"
         f"WT1: {data['wt1']}"
     )
@@ -237,7 +243,7 @@ def format_alert_message(data, prefix="🚨 VMC ENGINE V19"):
 def dispatch_pipeline(data):
     now_gmt8 = get_gmt8_now()
     quiet = is_quiet_window(now_gmt8)
-    
+
     is_priority_exit = data['raw_exit'] in ["CLOSE LONG", "CLOSE SHORT"]
     is_priority_line = data['raw_line_count'] > 0
     is_bypass_signal = is_priority_exit or is_priority_line
@@ -245,7 +251,7 @@ def dispatch_pipeline(data):
     if not quiet:
         digest_content = read_and_clear_digest()
         if digest_content:
-            digest_msg = f"🌅 06:00 GMT+8 QUIET HOURS DIGEST SUMMARY\n\n{digest_content}"
+            digest_msg = f"🌅 <b>06:00 GMT+8 QUIET HOURS DIGEST SUMMARY</b>\n\n{digest_content}"
             print("Broadcasting quiet hours digest summary...")
             send_telegram(digest_msg)
 
@@ -258,7 +264,7 @@ def dispatch_pipeline(data):
             digest_entry = (
                 f"[{data['time']}] ACTION: {data['action']} | "
                 f"HEALTH: {data['health']} | EXIT: {data['exit']} | "
-                f"IMAC: {data['imac']} | WT1: {data['wt1']}"
+                f"IMAC 15M: {data['imac']} | IMAC 1H: {data['imac_1h']} | WT1: {data['wt1']}"
             )
             print(f"[QUIET HOURS SUPPRESSED] Queued entry: {digest_entry}")
             append_digest_entry(digest_entry)
@@ -270,7 +276,7 @@ def dispatch_pipeline(data):
 
 if __name__ == "__main__":
     sig = get_vmc_signals()
-    if "error" not in sig: 
+    if "error" not in sig:
         dispatch_pipeline(sig)
-    else: 
+    else:
         print(f"Execution Error: {sig['error']}")
